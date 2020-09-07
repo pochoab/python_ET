@@ -1,0 +1,424 @@
+# coding: utf-8
+# SEBS for Landsat 8 4/3/2019
+import arcpy
+from arcpy import env 
+from arcpy.sa import*
+import math
+from math import *
+env.overwriteOutput = True
+
+# Import the plotting functionality of rasterio
+#import rasterio.plot
+
+
+#*******************************************************************************************************************************************************
+# I recommend using a separate workspace than for inputs and outputs since it will create quite a few files
+
+fol = "D:/Projects-DATA/SEBS_ETestimation"  # path folder.  Just change for  "C:/HYD118_Lab5/"
+
+arcpy.ClearWorkspaceCache_management()
+
+env.workspace = fol # *****update folder address*****
+arcpy.CheckOutExtension("spatial")
+env.outputCoordinateSystem=fol #*****update file locations*****
+
+env.extent=fol+"/Lab5SEBS/B2C.tif"  #*****update file locations*****
+
+# Set the geoprocessing workspace
+arcpy.env.workspace = r"D:\pp8ab\Dropbox\UCDavis\RESEARCH_COURSES\18_summerSessionI-2020\ET_SEBScode\SEBS_ET_GIS\SEBS_ETestimation.gdb"
+#arcpy.env.workspace = r"C:\Users\jiochoa\Dropbox\UCDavis\RESEARCH_COURSES\18_summerSessionI-2020\ET_SEBScode\SEBS_ET_GIS\SEBS_ETestimation.gdb"
+
+# Opening Landsat inputs        *****update file locations*****
+print("Opening Rasters")
+DN_band1 = Raster(fol+"/Lab5SEBS/B1.tif")*1.0
+DN_band2 = Raster(fol+"/Lab5SEBS/B2C.tif")*1.0
+DN_band3 = Raster(fol+"/Lab5SEBS/B3C.tif")*1.0
+DN_band4 = Raster(fol+"/Lab5SEBS/B4C.TIF")*1.0
+DN_band5 = Raster(fol+"/Lab5SEBS/B5C.TIF")*1.0
+DN_band6 = Raster(fol+"/Lab5SEBS/B6C.TIF")*1.0
+DN_band7 = Raster(fol+"/Lab5SEBS/B7C.TIF")*1.0
+DN_band10 = Raster(fol+"/Lab5SEBS/B10.TIF")*1.0
+DEM = Raster(fol+"/Lab5SEBS/DEM3.TIF")
+
+# Create a grid with value 1.0
+nullMap = Con(DN_band2>1,1,1)
+
+
+# Use local time for Landsat overpass for weather data
+t01 = time.time()
+print("calculating soil heat flux")
+jday = nullMap * 219 # julian date/ DOY
+UTC = nullMap * 18.75		#scene acquisition time - must Convert to decimal hours
+SW_in = nullMap * 921   # incoming shortwave radiaiton - W/m2
+T_air = nullMap * (31.30  + 273.15 )	# air temp - in C to convert to Kelvin
+RH = nullMap * 39.0     # %
+u_ref = nullMap * 2.8			# 2 m wind speed in m/s
+Prsure_ht = nullMap * 100124		# pressure in Pa
+Pa = nullMap * 1100   # environmental pressure in Pa
+Z_Blend = nullMap * 100     #blending height - I always use 100 m
+Z_ref = nullMap * 2     # reference weather station height
+Latitude = nullMap * 39.0553		
+Longitude = nullMap * ( -121.78749 )
+
+
+# Calculation of ConsTants for calculating surface reflecTance
+dayang = (( 2 * (math.pi) / 365 ) * ( jday - 1 )) * nullMap
+ecf = 1.00011 + 0.034221 * Cos ( dayang) + 0.00128 * Sin ( dayang ) +  0.000719 * Cos ( 2 * dayang ) + 0.000077 * Sin ( 2 * dayang )
+SolarDec = ( 0.006918 - 0.399912 * Cos ( dayang ) + 0.070257 * Sin ( dayang ) - 0.006758 * Cos ( 2 * dayang ) +  0.000907 * Sin ( 2 * dayang ) - 0.002697 * Cos ( 3 * dayang ) + 0.00148 * Sin ( 3 * dayang ) )
+EquTime = ( 0.000075 + 0.001868 * Cos ( dayang ) - 0.032077 * Sin ( dayang ) - 0.014615 * Cos ( 2 * dayang ) - 0.04089 * Sin ( 2 * dayang ) ) * 229.18
+LAT = UTC + (( 4 * Longitude ) / 60 ) + ( EquTime / 60 )
+Sunrise_ang = ACos ( -1 *  ( Tan ( (math.pi) / 180 * Latitude ) ) * Tan ( SolarDec ) )
+Hour_ang = 15 * ( LAT - 12 ) * ( ( math.pi ) / 180 )
+Solar_Zenith = ACos ( Sin ( ( math.pi ) / 180 * Latitude ) * Sin ( SolarDec ) + Cos ( SolarDec ) * Cos ( ( math.pi ) / 180 * Latitude ) * Cos ( Hour_ang ) )
+ES_Dist =  ( ecf **  ( - 0.5 ) )
+
+
+# Calculation of surface reflecTance values
+#*******************************************************************************************************************************************************
+Ref1 = DN_band1 * .00002 - 0.1  # *****update slope and intercept from MTL file *****
+Ref2 = DN_band2 * .00002 - 0.1  # *****update slope and intercept from MTL file *****
+Ref3 = DN_band3 * .00002 - 0.1  # *****update slope and intercept from MTL file *****
+Ref4 = DN_band4 * .00002 - 0.1  # *****update slope and intercept from MTL file *****
+Ref5 = DN_band5 * .00002 - 0.1  # *****update slope and intercept from MTL file *****
+Ref6 = DN_band6 * .00002 - 0.1  # *****update slope and intercept from MTL file *****
+Ref7 = DN_band7 * .00002 - 0.1  # *****update slope and intercept from MTL file *****
+Rad10 = DN_band10 * 0.0003420 + 0.1     # *****update slope and intercept from MTL file *****
+#*******************************************************************************************************************************************************
+
+#radiant temperature
+Trad = 1321.0789 / (Ln((774.8853/Rad10)+1)) # it is not being used really
+#Albedo_Pltry = 0.356 * Ref2 + 0.13 * Ref4 + 0.373 * Ref5 + 0.085 * Ref6 + 0.072 * Ref7 - 0.0018
+Albedo_Pltry = 0.356 * Ref1 + 0.13 * Ref3 + 0.373 * Ref4 + 0.085 * Ref5 + 0.072 * Ref7 - 0.0018  # quick
+SW_in_exo = 1367 * ecf * Cos ( Solar_Zenith )
+Transmvty = SW_in / SW_in_exo
+Albd_pl_min=0.01*nullMap
+Albedo_sur = ( Albedo_Pltry - Albd_pl_min ) /  ( Transmvty ** 2 )   # very slow
+Net_SW = ( 1 - Albedo_sur ) * SW_in # slow
+NDVI = ( Ref5 - Ref4 ) / ( Ref5 + Ref4 )
+Surface_Emm = Con ( NDVI > 0.16 , ( 1.0094 + 0.047 * Ln ( NDVI ) ) , Con( NDVI <= 0.16 , 0.92 ))
+
+
+print("calculating Surface Temprature")
+#T_surf =  ( Surface_Emm ** - 0.25 ) * Trad
+T_surf = T_air/(1.0 - DEM / 44331.0)**1.5029
+Air_emmsvty = 0.85 * (   ((( -1 ) * Ln ( Transmvty )) ** 0.09 ))
+LW_in = 5.67E-8 * Air_emmsvty * T_air** 4 
+LW_out =  ( 1 - Surface_Emm ) * LW_in + ( Surface_Emm * 5.67E-8 *  ( T_surf ** 4 ) )
+Net_Rad = Net_SW + LW_in - LW_out 
+NDVI_min = 0.05
+NDVI_max = 0.95
+Conopy_cov = 1 - (  ( ( ( NDVI - NDVI_max ) / ( NDVI_min - NDVI_max ) )** 0.4631 ))
+t02 = time.time()
+t03 = t02-t01
+print("execution time: ", round(t03, 2), " sg")  #  187.78 sg
+
+
+t04 = time.time()
+G = Net_Rad * (( T_surf  - 273.15 ) / ( 100 * Albedo_sur )) * (( 0.32 * Albedo_sur ) + ( 0.62 *  ( Albedo_sur ** 2 ))) * ( 1 - ( 0.98 *  ( NDVI ** 4 )))
+H_dry = arcpy.Raster(Net_Rad - G, r"memory\H_dry")
+Zom = Raster(Exp ( -5.5 + 5.8 * NDVI ),  r"memory\Zom")
+Ht_Canopy = Raster(Zom / 0.136, r"memory\Ht_Canopy")
+LAI = Raster (8.768 *  ( NDVI ** 3.616 ), r"memory\LAI")
+Dis_Ht = Raster(1 - (( 1 - ( Exp( (- 1) *  ( 20.6 * LAI )**(1/2)))) / (  ( 20.6 * LAI )**(1/2))), r"memory\Dis_Ht")
+U_Blend = Raster(u_ref * ( ( Ln ( Z_Blend - Dis_Ht ) - Ln ( Zom ) ) / ( Ln ( Z_ref - Dis_Ht ) - Ln ( Zom ) ) ), r"memory\U_Blend")
+Kin_exo = Raster((24 / ( math.pi ) ) * 1367 * 0.0036 * ecf * Sin( (( math.pi ) / 180 ) * Latitude ) * Sin ( SolarDec ) * ( Sunrise_ang - Tan ( Sunrise_ang ) ), r"memory\Kin_exo")
+Total_sunhne = Raster(360 * Sunrise_ang / ( 15 * ( math.pi )), r"memory\Total_sunhne")
+tau_day = Raster(0.25 + 0.5 * ( 10 / Total_sunhne ), r"memory\tau_day")
+Kin_day = Raster(11.5741 * tau_day * Kin_exo, r"memory\Kin_day")
+L_day = - Raster(110 * tau_day, r"memory\L_day")
+t05 = time.time()
+t06 = t05-t04
+print("execution time: ", round(t06, 2), " sg")  # 1seg
+
+
+print("calculating daily net radiation")
+t07 = time.time()
+Rn_day = Raster((( 1 - (1.1 * Albedo_sur )) * Kin_day ) + L_day, r"memory\Rn_day")
+Latent_HV = Raster(( 2.501 - ( 0.00236 * ( T_surf - 273.15 ))) * 1000000, r"memory\Latent_HV")
+#theta_surf = T_surf * ( 100000** 0.286 ) / ( Prsure_ht ** 0.286 ) 
+#theta_surf = T_surf
+theta_surf = Raster(T_surf * ( 101325** 0.286 ) / ( Prsure_ht ** 0.286 ), r"memory\theta_surf" )
+fs = Raster(1 - Conopy_cov, r"memory\fs")
+Spec_humd = Raster(0.625 * Air_emmsvty * 1000 / Prsure_ht, r"memory\Spec_humd")
+theta_v = Raster((1 + (0.61 * Spec_humd ) ) * theta_surf, r"memory\theta_v")
+Ustar_Uh = Raster(0.32 - ( 0.264 * Exp ( -15.1 * 0.2 * LAI )), r"memory\Ustar_Uh")
+nec = Raster(( 0.2 * LAI ) / ( 2 * ( Ustar_Uh**2 )), r"memory\nec")
+term1 = Raster(Con ( Exp ( - nec / 2 ) == 1, 0, (( 0.41 * 0.2 *  ( Conopy_cov**2 )) / ( 4 *  0.03 * Ustar_Uh * (1 - Exp ( - nec / 2 ))))), r"memory\term1")
+kineVisco = Raster(1.327E-5 * ( 101325 / (Pa * 100) ) * ( ( T_air ** 1.81) / (273.15**1.81)), r"memory\kineVisco")
+Phi_o = Raster((- 1 ) * math.log (0.33) + (3** 0.5) * 0.41 * ( 0.33 **( 1 / 3 )) * (( math.pi ) / 6 )  * nullMap, r"memory\Phi_o")
+esat = Raster(6.107 *  ( 10** (( 7.5 * ( T_air - 273.15 )) / ( 237.3 + ( T_air - 273.15 )))), r"memory\esat")
+Act_VP = Raster(RH * esat / 100, r"memory\Act_VP")
+Change_VP = Raster(esat * 7.5 * 237.3 * math.log ( 10 ) / ( (( 237.3 + ( T_air - 273.15 ) ) ** 2 )), r"memory\Change_VP")
+t08 = time.time()
+t09 = t08-t07
+print("execution time t09: ", round(t09, 2), " sg")      # 1.2 sg     
+
+#ITERATION 0 : SETTING INITIAL CONDITIONS TO BE NEUTRAL STABILITY for Sensible heat Flux
+print("iteration 0 for dry conditions")
+t11 = time.time()
+arcpy.ClearWorkspaceCache_management()
+Ustar = Raster((0.41 * U_Blend ) / Ln (( Z_Blend - Dis_Ht ) / Zom ), r"memory\Ustar")
+ReStar = Raster(0.009 * Ustar / kineVisco, r"memory\ReStar")
+Ct_star = Raster(( 0.71**(- 2 / 3)) * (ReStar**-0.5), r"memory\Ct_Star")
+term2 = Raster(Con ( Zom == 0, 0, (( 2 * Conopy_cov * fs * 0.41 * Ustar_Uh * ( Zom / Ht_Canopy )) / Ct_star )), r"memory\term2")
+term3 = Raster((( 2.46 * ( ReStar ** 0.25 )) - ( math.log ( 7.4 ))) *  ( fs**2 ), r"memory\term3")
+KB = Raster(term1 + term2 + term3, r"memory\KB")
+Zoh = Raster(Con (( Zom / Exp ( KB )) <= 0.00001, 0.00001, ( Zom / Exp( KB ))), r"memory\Zoh")
+t_c = Raster(( Ln ( ( Z_Blend - Dis_Ht ) / Zoh ) ) / ( Ln ( ( Z_ref - Dis_Ht ) / Zoh ) ), r"memory\t_c")
+t_pbla = Raster(T_surf * ( 1 - t_c ) + ( T_air * t_c ), r"memory\t_pbla")
+theta_air =  Raster(t_pbla * (  ( 101325** 0.286 ) /  ( Prsure_ht ** 0.286 ) ), r"memory\theta_air")
+delta_T = Raster(theta_surf - theta_air, r"memory\delta_T")
+rah = Raster(Ln(((Z_ref - Dis_Ht) / Zoh)) / (0.41 * Ustar), r"memory\rah")
+Sen_Heat = Raster(Con ( delta_T < 0, 0.01, (( delta_T * 1005 * 1.17 ) / rah )), r"memory\Sen_Heat")
+MO_L = Raster((-1.17 * 1005 * ( ( Ustar ** 3 )) * theta_v ) / ( 0.41 * 9.81 * Sen_Heat ), r"memory\MO_L")
+y_1 = Raster((( - 1 ) * ( Z_ref - Dis_Ht )) / MO_L, r"memory\y_1")
+y_2 = Raster(( -1 ) * ( Zom / MO_L ), r"memory\y_2")
+x_1 =  Raster((( y_1 / 0.33 ) ** 0.33333 ), r"memory\x_1")
+x_2 =  Raster((( y_2 / 0.33 )** 0.333333 ), r"memory\x_2")
+phi_m1 = Raster(Ln (( 0.33 + y_1 )) - ( 3 * 0.41 *  ( y_1** (1 / 3))) + 0.142 * ( Ln ((  ( 1 + x_1 )**2) / ( 1 - x_1 +  ( x_1**2 )))) + 0.492 * ATan (( 2 * x_1 - 1 ) /  ( 3**(1/2) )) + Phi_o, r"memory\phi_m1")
+phi_m2 = Raster(Ln (( 0.33 + y_2 )) - ( 3 * 0.41 *  ( y_2** (1 / 3))) + 0.142 * ( Ln (( ( 1 + x_2 )**2) / ( 1 - x_2 +  ( x_2**2 )))) + 0.492 * ATan (( 2 * x_2 - 1 ) /  ( 3**(1/2) )) + Phi_o, r"memory\phi_m2")
+phi_h1 = Raster((( 1 - 0.057 ) / 0.78 ) * Ln (( 0.33 +  ( y_1** 0.78 )) / 0.33 ), r"memory\phi_h1")
+phi_h2 = Raster((( 1 - 0.057 ) / 0.78 ) * Ln (( 0.33 + ( y_2** 0.78 )) / 0.33 ), r"memory\phi_h2")
+t12 = time.time()-t11
+print("execution time: ", round(t12, 2), " sg")  ## 27 sg  (after clenaing cache)
+
+#ITERATION 0 : SETTING INITIAL CONDITIONS TO BE NEUTRAL STABILITY for Wet Limit Sensible heat Flux
+print("iteration 0 for wet conditions")
+t13=time.time()
+arcpy.ClearWorkspaceCache_management()
+Ustar_w = Raster( ( 0.41 * U_Blend ) / Ln (( Z_Blend - Dis_Ht ) / Zom ), r"memory\Ustar_w")
+ReStar_w = Raster( 0.009 * Ustar_w / kineVisco, r"memory\ReStar_w")
+Ct_star_w =  Raster( ( 0.71 ** ( - 2 / 3 )) *  ( ReStar_w ** -0.5 ), r"memory\Ct_star_w")
+term2_w = Raster( Con ( Zom == 0, 0, (( 2 * Conopy_cov * fs * 0.41 * Ustar_Uh * ( Zom / Ht_Canopy )) / Ct_star_w )), r"memory\term2_w")
+term3_w = Raster( (( 2.46 *  ( ReStar_w** 0.25 )) - ( math.log ( 7.4 ))) *  ( fs**2 ), r"memory\term3_w")
+KB_w = Raster( term1 + term2_w + term3_w, r"memory\KB_w")
+Zoh_w = Raster( Con ((Zom / Exp(KB_w)) <= 0.00001, 0.00001, (Zom / Exp(KB_w))), r"memory\Zoh_w")
+rew = Raster( Ln ((( Z_ref - Dis_Ht ) / Zoh_w )) / ( 0.41 * Ustar_w ), r"memory\rew")
+MO_Lw = Raster( ( -1.17 *  ( Ustar_w ** 3 )) / ((( Net_Rad - G ) * 0.41 * 9.81 * 0.61 ) / 2450000 ), r"memory\MO_Lw")
+Hwet = Raster( (( Net_Rad - G ) - ((( 1.17 * 1005 ) / rew ) * (( esat - Act_VP ) / 0.067 ))) / ( 1 + ( Change_VP / 0.067 )), r"memory\Hwet")
+yw_1 = Raster( (( -1 ) * ( Z_ref - Dis_Ht )) / MO_Lw, r"memory\yw_1")
+yw_2 = Raster( ( -1 ) * ( Zom / MO_Lw ), r"memory\yw_2")
+xw_1 =  Raster( (( yw_1 / 0.33 ) ** 0.33333), r"memory\xw_1")
+xw_2 =  Raster( (( yw_2 / 0.33 ) ** 0.33333), r"memory\xw_2")
+phi_mw1 = Raster( Ln (( 0.33 + yw_1 )) - ( 3 * 0.41 *  ( yw_1** (1 / 3 ))) + 0.142 * ( Ln (( ( 1 + xw_1 )**2) / (1 - xw_1 + ( xw_1 )**2))) + 0.492 * ATan ((2 * xw_1 - 1) /  ( 3**0.5 )) + Phi_o, r"memory\phi_mw1")
+phi_mw2 = Raster( Ln (( 0.33 + yw_2 )) - ( 3 * 0.41 *  ( yw_2** (1 / 3 ))) + 0.142 * ( Ln (( ( 1 + xw_2 )**2) / (1 - xw_2 + ( xw_2 )**2))) + 0.492 * ATan ((2 * xw_2 - 1) /  ( 3**0.5 )) + Phi_o, r"memory\phi_mw2")
+phi_hw1 = Raster( (( 1 - 0.057 ) / 0.78 ) * Ln ((0.33 + (yw_1** 0.78)) / 0.33 ), r"memory\phi_hw1")
+phi_hw2 = Raster( (( 1 - 0.057 ) / 0.78 ) * Ln ((0.33 + (yw_2** 0.78)) / 0.33 ), r"memory\phi_hw2")
+t14=time.time()-t13
+print("execution time: ", round(t14, 2), " sg")  # 8.38 sg
+
+
+
+#/ITERATION 1: Sensible Heat Flux
+print("iteration 1 for dry conditions")
+arcpy.ClearWorkspaceCache_management()
+t15 = time.time()
+Ustar_1 = Raster( ( 0.41 * U_Blend ) / (Ln (( Z_Blend - Dis_Ht ) / Zom ) - phi_m1 + phi_m2 ), r"memory\Ustar_1")
+ReStar_1 = Raster( 0.009 * Ustar_1 / kineVisco, r"memory\ReStar_1")
+Ct_star_1 =  Raster( ( 0.71**(- 2 / 3)) * ( ReStar_1 ** -0.5 ), r"memory\Ct_star_1")
+term2_1 = Raster( Con (Zom == 0, 0, ((2 * Conopy_cov * fs * 0.41 * Ustar_Uh * (Zom / Ht_Canopy)) / Ct_star_1)), r"memory\term2_1")
+term3_1 = Raster( ((2.46 * (ReStar_1** 0.25)) - (math.log(7.4))) * (fs**2), r"memory\term3_1")
+KB_1 = Raster( term1 + term2_1 + term3_1, r"memory\KB_1")
+
+Zoh_1 = Raster( Con ((Zom / Exp(KB_1)) <= 0.00001, 0.00001, (Zom / Exp(KB_1))), r"memory\Zoh_1") #40 sg
+
+t_c_1 = Raster( ( Ln ( ( Z_Blend - Dis_Ht) / Zoh_1 ) ) / ( Ln ( ( Z_ref - Dis_Ht ) / Zoh_1 ) ), r"memory\t_c_1") #1 min
+
+t_pbla_1 = Raster( T_surf * ( 1 - t_c_1 ) + (T_air * t_c_1), r"memory\t_pbla_1") # 30 sg
+
+theta_air_1 =  Raster( t_pbla_1 * (  ( 101325** 0.286) /  (Prsure_ht ** 0.286 ) ), r"memory\theta_air_1")
+delta_T_1 = Raster( theta_surf - theta_air_1, r"memory\delta_T_1")
+rah_1 = Raster( (Ln(((Z_ref - Dis_Ht) / Zoh_1)) - phi_h1 + phi_h2 ) / (0.41 * Ustar_1), r"memory\rah_1")
+t16=round(time.time()-t15, 2)
+print("execution time t16: ", t16, " sg")  # 251.72 sg = 4.20 minutes # with cache cleaned 211 sg
+
+arcpy.ClearWorkspaceCache_management()
+
+t200 = time.time()
+Sen_Heat_1 = Con (delta_T < 0, 0.01, ((delta_T_1 * 1005 * 1.17 ) / rah_1))
+t201=time.time()
+t202=round(t201-t200, 2)
+print("execution time t202: ", round(t202/60), " min") # 4 min
+
+
+t203 = time.time()
+MO_L_1 = Raster( (-1.17 * 1005 * ((Ustar_1**3)) * theta_v) / (0.41 * 9.81 * Sen_Heat_1), r"memory\MO_L_1")
+t204=round(time.time()-t203, 2)
+print("execution time t204: ", round(t204/60), " min") 
+
+#t205=time.time()
+# Get input Raster properties
+#MO_L_1_array = arcpy.RasterToNumPyArray(MO_L_1, nodata_to_value=0)
+#t205=time.time()
+#y_1_1 = arcpy.Raster(((- 1 ) * ( Z_ref - Dis_Ht )) / MO_L_1_array)
+#lowerLeft = arcpy.Point(y_1_1.extent.XMin,inRas.extent.YMin)
+#cellSize = ras.meanCellWidth
+# Convert Raster to numpy array
+#y_1_1_array = arcpy.RasterToNumPyArray(y_1_1, nodata_to_value=0)
+#t206=round(time.time()-t205, 2)
+#print("execution time t206 (min): ", round(t206/60)) 
+
+y_1_1 = Raster( ((- 1 ) * ( Z_ref - Dis_Ht )) / MO_L_1, r"memory\y_1_1")
+y_2_1 = Raster( ( -1 ) * ( Zom / MO_L_1 ), r"memory\y_2_1")
+x_1_1 =  Raster( (( y_1_1 / 0.33 )** 0.33333 ), r"memory\x_1_1")
+x_2_1 = Raster( (( y_2_1 / 0.33 )** 0.333333 ), r"memory\x_2_1")
+phi_m1_1 = Raster( Ln(( 0.33 + y_1_1 )) - ( 3 * 0.41 *  ( y_1_1** ( 1 / 3 ))) + 0.142 * ( Ln ((  (1 + x_1_1 )**2) / (1 - x_1_1 +  ( x_1_1 )**2))) + 0.492 * ATan (( 2 * x_1_1 - 1 ) /  ( 3**0.5 )) + Phi_o, r"memory\phi_m1_1")
+phi_m2_1 = Raster( Ln((0.33 + y_2_1)) - (3 * 0.41 * (y_2_1** (1 / 3))) + 0.142 * (Ln(((1 + x_2_1)**2) / (1 - x_2_1 + (x_2_1)**2))) + 0.492 * ATan((2 * x_2_1 - 1) / (3**0.5)) + Phi_o, r"memory\phi_m2_1")
+phi_h1_1 = Raster( (( 1 - 0.057 ) / 0.78 ) * Ln (( 0.33 +  ( y_1_1** 0.78 )) / 0.33 ), r"memory\phi_h1_1")
+phi_h2_1 = Raster( (( 1 - 0.057 ) / 0.78 ) * Ln (( 0.33 +  ( y_2_1** 0.78 )) / 0.33 ), r"memory\phi_h2_1")
+t21=time.time()
+t22=round(t21-t20, 2)
+print("execution time t22 (min): ", round(t22/60))  # 74.08 minutes, 1h14min;  71 min after clearing cache
+
+
+
+#ITERATION 1: Wet Limit Sensible Heat Flux
+t23 = time.time()
+print("iteration 1 for wet conditions")
+Ustar_w_1 = Raster(( 0.41 * U_Blend ) / ( Ln (( Z_Blend - Dis_Ht ) / Zom ) - phi_mw1 + phi_mw2 ), r"memory\Ustar_w_1")
+ReStar_w_1 = Raster(0.009 * Ustar_w_1 / kineVisco, r"memory\ReStar_w_1")
+Ct_star_w_1 =  Raster(( 0.71**(- 2 / 3)) *  ( ReStar_w_1 ** -0.5 ), r"memory\Ct_star_w_1")
+term2_w_1 = Raster(Con ( Zom == 0, 0, (( 2 * Conopy_cov * fs * 0.41 * Ustar_Uh * ( Zom / Ht_Canopy )) / Ct_star_w_1 )), r"memory\term2_w_1")
+term3_w_1 = Raster((( 2.46 *  ( ReStar_w_1 ** 0.25 )) - ( math.log ( 7.4 ))) *  ( fs**2 ), r"memory\term3_w_1")
+KB_w_1 = Raster(term1 + term2_w_1 + term3_w_1, r"memory\KB_w_1")
+Zoh_w_1 = Raster(Con (( Zom / Exp ( KB_w_1 )) <= 0.00001, 0.00001, ( Zom / Exp ( KB_w_1 ))), r"memory\Zoh_w_1")
+rew_1 = Raster(( Ln ((( Z_ref - Dis_Ht ) / Zoh_w_1 )) - phi_hw1 + phi_hw2 ) / ( 0.41 * Ustar_w_1 ), r"memory\rew_1")
+MO_Lw_1 = Raster(( -1.17 * ( Ustar_w_1**3 )) / ((( Net_Rad - G ) * 0.41 * 9.81 * 0.61 ) / 2450000), r"memory\MO_Lw_1")
+Hwet_1 = Raster((( Net_Rad - G ) - ((( 1.17 * 1005 ) / rew_1 ) * (( esat - Act_VP ) / 0.067 ))) / ( 1 + ( Change_VP / 0.067 )), r"memory\Hwet_1")
+yw_1_1 = Raster(((- 1 ) * ( Z_ref - Dis_Ht )) / MO_Lw_1, r"memory\yw_1_1")
+yw_2_1 = Raster(( -1 ) * ( Zom / MO_Lw_1 ), r"memory\yw_2_1")
+xw_1_1 =  Raster((( yw_1_1 / 0.33)** 0.33333), r"memory\xw_1_1")
+xw_2_1 =  Raster((( yw_2_1 / 0.33)** 0.33333), r"memory\xw_2_1")
+phi_mw1_1 = Raster(Ln (( 0.33 + yw_1_1 )) - ( 3 * 0.41 *  ( yw_1_1** (1 / 3 ))) + 0.142 * ( Ln (( (1 + xw_1_1 )**2) / ( 1 - xw_1_1 +  ( xw_1_1 )**2))) + 0.492 * ATan (( 2 * xw_1_1 - 1 ) /  (3**0.5 )) + Phi_o, r"memory\phi_mw1_1")
+phi_mw2_1 = Raster(Ln (( 0.33 + yw_2_1 )) - ( 3 * 0.41 *  ( yw_2_1** (1 / 3 ))) + 0.142 * ( Ln (( (1 + xw_2_1 )**2) / ( 1 - xw_2_1 +  ( xw_2_1 )**2))) + 0.492 * ATan (( 2 * xw_2_1 - 1 ) /  (3**0.5 )) + Phi_o, r"memory\phi_mw2_1")
+phi_hw1_1 = Raster((( 1 - 0.057) / 0.78) * Ln((0.33 + (yw_1_1** 0.78)) / 0.33), r"memory\phi_hw1_1")
+phi_hw2_1 = Raster((( 1 - 0.057) / 0.78) * Ln((0.33 + (yw_2_1** 0.78)) / 0.33), r"memory\phi_hw2_1")
+t24=time.time()
+t25=round(t24-t23, 2)
+print("execution time t25 (min): ", round(t25/60, 2))  # 2.36 min  # improved to 1.12 min
+
+
+
+#ITERATION 2: Sensible Heat Flux
+print("iteration 2 for dry conditions")
+t26 = time.time()
+Ustar_2 = Raster(( 0.41 * U_Blend ) / ( Ln (( Z_Blend - Dis_Ht ) / Zom ) - phi_m1_1 + phi_m2_1 ), r"memory\Ustar_2")
+ReStar_2 = Raster(0.009 * Ustar_2 / kineVisco, r"memory\ReStar_2")
+Ct_star_2 =  Raster(( 0.71 ** ( - 2 / 3 )) *  ( ReStar_2 ** -0.5 ), r"memory\Ct_star_2")
+term2_2 = Raster(Con ( Zom == 0, 0, (( 2 * Conopy_cov * fs * 0.41 * Ustar_Uh * ( Zom / Ht_Canopy )) / Ct_star_2 )), r"memory\term2_2")
+print("execution time: ", round((time.time()-t26)/60, 2)) # 55.63 min
+
+t27 = time.time()
+term3_2 = Raster((( 2.46 *  ( ReStar_2** 0.25 )) - ( math.log( 7.4) )) * ( fs**2 ), r"memory\term3_2")
+KB_2 = Raster(term1 + term2_2 + term3_2, r"memory\KB_2")
+t28=time.time()
+t29=round(t28-t27, 2)
+print("execution time in min: ", round(t29/60, 2))  #
+
+Zoh_2 = Raster(Con (( Zom / Exp( KB_2 )) <= 0.00001, 0.00001, ( Zom / Exp( KB_2 ))), r"memory\Zoh_2")
+t_c_2 = Raster(( Ln ( ( Z_Blend - Dis_Ht ) / Zoh_2 ) ) / ( Ln ( ( Z_ref - Dis_Ht ) / Zoh_2 ) ), r"memory\t_c_2")
+t_pbla_2 = Raster(T_surf * ( 1 - t_c_2 ) + ( T_air * t_c_2 ), r"memory\t_pbla_2")
+theta_air_2 =  Raster(t_pbla_2 * (  ( 101325** 0.286) /  ( Prsure_ht ** 0.286 ) ), r"memory\theta_air_2")
+delta_T_2 = Raster(theta_surf - theta_air_2, r"memory\delta_T_2")
+rah_2 = Raster((Ln(((Z_ref - Dis_Ht) / Zoh_2)) - phi_h1_1 + phi_h2_1 ) / ( 0.41 * Ustar_2 ), r"memory\rah_2")
+Sen_Heat_2 = Raster(Con (delta_T < 0, 0.01, (( delta_T_2 * 1005 * 1.17 ) / rah_2 )), r"memory\Sen_Heat_2")
+MO_L_2 = Raster(( -1.17 * 1005 * (  ( Ustar_2**3 )) * theta_v ) / ( 0.41 * 9.81 * Sen_Heat_2 ), r"memory\MO_L_2")
+y_1_2 = Raster((( -1 ) * ( Z_ref - Dis_Ht )) / MO_L_2, r"memory\y_1_2")
+y_2_2 = Raster(( -1 ) * ( Zom / MO_L_2 ), r"memory\y_2_2")
+x_1_2 =  Raster((( y_1_2 / 0.33 )** 0.33333 ), r"memory\x_1_2")
+x_2_2 =  Raster((( y_2_2 / 0.33)** 0.333333 ), r"memory\x_2_2")
+phi_m1_2 = Raster(Ln ((0.33 + y_1_2 )) - ( 3 * 0.41 * ( y_1_2** ( 1 / 3 ))) + 0.142 * ( Ln ((  (1 + x_1_2 )**2) / ( 1 - x_1_2 +  ( x_1_2**2 )))) + 0.492 * ATan (( 2 * x_1_2 - 1 ) /  ( 3**0.5 )) + Phi_o, r"memory\phi_m1_2")
+phi_m2_2 = Raster(Ln ((0.33 + y_2_2 )) - ( 3 * 0.41 * ( y_2_2** ( 1 / 3 ))) + 0.142 * ( Ln ((  (1 + x_2_2 )**2) / ( 1 - x_2_2 +  ( x_2_2**2 )))) + 0.492 * ATan (( 2 * x_2_2 - 1 ) /  ( 3**0.5 )) + Phi_o, r"memory\phi_m2_2")
+phi_h1_2 = Raster((( 1 - 0.057 ) / 0.78 ) * Ln (( 0.33 + ( y_1_2** 0.78 )) / 0.33 ), r"memory\phi_h1_2")
+phi_h2_2 = Raster((( 1 - 0.057 ) / 0.78 ) * Ln (( 0.33 + ( y_2_2** 0.78 )) / 0.33 ), r"memory\phi_h2_2")
+
+                  
+#ITERATION 2: Wet Limit Sensible Heat Flux
+print("iteration 2 for wet conditions")
+Ustar_w_2 = ( 0.41 * U_Blend ) / ( Ln (( Z_Blend - Dis_Ht ) / Zom ) - phi_mw1_1 + phi_mw2_1 )
+ReStar_w_2 = 0.009 * Ustar_w_2 / kineVisco
+Ct_star_w_2 =  ( 0.71**(- 2 / 3 )) * ( ReStar_w_2**-0.5 )
+term2_w_2 = Con ( Zom == 0, 0, (( 2 * Conopy_cov * fs * 0.41 * Ustar_Uh * ( Zom / Ht_Canopy )) / Ct_star_w_2 ))
+term3_w_2 = (( 2.46 *  ( ReStar_w_2** 0.25 )) - ( math.log ( 7.4 ))) *  ( fs**2 )
+KB_w_2 = term1 + term2_w_2 + term3_w_2
+Zoh_w_2 = Con (( Zom / Exp ( KB_w_2 )) <= 0.00001, 0.00001, ( Zom / Exp ( KB_w_2 )))
+rew_2 = ( Ln ((( Z_ref - Dis_Ht ) / Zoh_w_2 )) - phi_hw1_1 + phi_hw2_1 ) / ( 0.41 * Ustar_w_2 )
+MO_Lw_2 = (-1.17 *  ( Ustar_w_2**3 )) / ((( Net_Rad - G ) * 0.41 * 9.81 * 0.61 ) / 2450000 )
+Hwet_2 = (( Net_Rad - G ) - ((( 1.17 * 1005 ) / rew_2 ) * (( esat - Act_VP ) / 0.067 ))) / ( 1 + ( Change_VP / 0.067 ))
+yw_1_2 = ((- 1 ) * (Z_ref - Dis_Ht)) / MO_Lw_2
+yw_2_2 = (-1) * (Zom / MO_Lw_2)
+xw_1_2 = (( yw_1_2 / 0.33)** 0.33333 )
+xw_2_2 = (( yw_2_2 / 0.33)** 0.33333 )
+phi_mw1_2 = Ln (( 0.33 + yw_1_2 )) - ( 3 * 0.41 *  ( yw_1_2** ( 1 / 3 ))) + 0.142 * ( Ln (( ( 1 + xw_1_2 )**2) / (1 - xw_1_2 + ( xw_1_2**2 )))) + 0.492 * ATan ((2 * xw_1_2 - 1 ) /  ( 3**0.5 )) + Phi_o
+phi_mw2_2 = Ln (( 0.33 + yw_2_2 )) - ( 3 * 0.41 *  ( yw_2_2** ( 1 / 3 ))) + 0.142 * ( Ln (( ( 1 + xw_2_2 )**2) / (1 - xw_2_2 + ( xw_2_2**2 )))) + 0.492 * ATan ((2 * xw_2_2 - 1 ) /  ( 3**0.5 )) + Phi_o
+phi_hw1_2 = (( 1 - 0.057 ) / 0.78 ) * Ln(( 0.33 +  ( yw_1_2** 0.78 )) / 0.33 )
+phi_hw2_2 = (( 1 - 0.057 ) / 0.78 ) * Ln(( 0.33 +  ( yw_2_2** 0.78 )) / 0.33 )
+
+#ITERATION 3: Sensible Heat Flux
+print("iteration 3 for dry conditions")
+Ustar_3 = ( 0.41 * U_Blend ) / (Ln (( Z_Blend - Dis_Ht ) / Zom ) - phi_m1_2 + phi_m2_2 )
+ReStar_3 = 0.009 * Ustar_3 / kineVisco
+Ct_star_3 =  ( 0.71 **( - 2 / 3 )) *  ( ReStar_3 ** -0.5 )
+term2_3 = Con ( Zom == 0, 0, ((2 * Conopy_cov * fs * 0.41 * Ustar_Uh * ( Zom / Ht_Canopy )) / Ct_star_3 ))
+term3_3 = (( 2.46 *  ( ReStar_3** 0.25 )) - ( math.log ( 7.4 ))) *  ( fs**2 )
+KB_3 = term1 + term2_3 + term3_3
+Zoh_3 = Con (( Zom / Exp ( KB_3 )) <= 0.00001, 0.00001, ( Zom / Exp ( KB_3 )))
+t_c_3 = ( Ln ( ( Z_Blend - Dis_Ht ) / Zoh_3 ) ) / ( Ln ( ( Z_ref - Dis_Ht ) / Zoh_3 ) )
+t_pbla_3 = T_surf * ( 1 - t_c_3 ) + (T_air * t_c_3 )
+theta_air_3 =  t_pbla_3 * (  ( 101325** 0.286 ) /  ( Prsure_ht ** 0.286 ) )
+delta_T_3 = theta_surf - theta_air_3
+rah_3 = ( Ln ((( Z_ref - Dis_Ht ) / Zoh_3 )) - phi_h1_2 + phi_h2_2 ) / ( 0.41 * Ustar_3 )
+Sen_Heat_3 = Con ( delta_T_3 < 0, 0.01, (( delta_T_3 * 1005 * 1.17 ) / rah_3 ))
+MO_L_3 = ( -1.17 * 1005 * (  ( Ustar_3**3 )) * theta_v ) / (0.41 * 9.81 * Sen_Heat_3 )
+y_1_3 = (( -1 ) * ( Z_ref - Dis_Ht )) / MO_L_3
+y_2_3 = (-1) * ( Zom / MO_L_3 )
+x_1_3 =  (( y_1_3 / 0.33 )** 0.33333 )
+x_2_3 =  (( y_2_3 / 0.33 )** 0.333333 )
+phi_m1_3 = Ln (( 0.33 + y_1_3 )) - ( 3 * 0.41 *  ( y_1_3** ( 1 / 3 ))) + 0.142 * ( Ln ((  ( 1 + x_1_3 )**2) / ( 1 - x_1_3 +  ( x_1_3**2 )))) + 0.492 * ATan (( 2 * x_1_3 - 1 ) /  ( 3**0.5 )) + Phi_o
+phi_m2_3 = Ln (( 0.33 + y_2_3 )) - ( 3 * 0.41 *  ( y_2_3** ( 1 / 3 ))) + 0.142 * ( Ln ((  ( 1 + x_2_3 )**2) / ( 1 - x_2_3 +  ( x_2_3**2 )))) + 0.492 * ATan (( 2 * x_2_3 - 1 ) /  ( 3**0.5 )) + Phi_o
+phi_h1_3 = (( 1 - 0.057) / 0.78 ) * Ln (( 0.33 +  ( y_1_3** 0.78 )) / 0.33 )
+phi_h2_3 = (( 1 - 0.057) / 0.78 ) * Ln (( 0.33 +  ( y_2_3** 0.78 )) / 0.33 )
+
+#ITERATION 3: Wet Limit Sensible Heat Flux
+print("iteration 3 for wet conditions")
+Ustar_w_3 = (0.41 * U_Blend ) / (Ln((Z_Blend - Dis_Ht) / Zom) - phi_mw1_2 + phi_mw2_2 )
+ReStar_w_3 = 0.009 * Ustar_w_3 / kineVisco
+Ct_star_w_3 =  ( 0.71**(- 2 / 3)) * (ReStar_w_3**-0.5)
+term2_w_3 = Con (Zom == 0, 0, ((2 * Conopy_cov * fs * 0.41 * Ustar_Uh * (Zom / Ht_Canopy)) / Ct_star_w_3))
+term3_w_3 = ((2.46 * (ReStar_w_3** 0.25)) - (math.log(7.4))) * (fs**2)
+KB_w_3 = term1 + term2_w_3 + term3_w_3
+Zoh_w_3 = Con ((Zom / Exp(KB_w_3)) <= 0.00001, 0.00001, (Zom / Exp(KB_w_3)))
+rew_3 = (Ln(((Z_ref - Dis_Ht) / Zoh_w_3)) - phi_hw1_2 + phi_hw2_2 ) / (0.41 * Ustar_w_3)
+MO_Lw_3 = (-1.17 * (Ustar_w_3**3)) / (((Net_Rad - G) * 0.41 * 9.81 * 0.61) / 2450000)
+Hwet_3 = ((Net_Rad - G) - (((1.17 * 1005) / rew_3) * ((esat - Act_VP) / 0.067))) / ( 1 + (Change_VP / 0.067))
+yw_1_3 = ((- 1 ) * (Z_ref - Dis_Ht)) / MO_Lw_3
+yw_2_3 = (-1) * (Zom / MO_Lw_3)
+xw_1_3 = ((yw_1_3 / 0.33)** 0.33333)
+xw_2_3 = ((yw_2_3 / 0.33)** 0.33333)
+phi_mw1_3 = Ln((0.33 + yw_1_3)) - (3 * 0.41 * (yw_1_3** (1 / 3))) + 0.142 * (Ln(((1 + xw_1_3)**2) / (1 - xw_1_3 + (xw_1_3**2)))) + 0.492 * ATan((2 * xw_1_3 - 1) / (3**0.5)) + Phi_o
+phi_mw2_3 = Ln((0.33 + yw_2_3)) - (3 * 0.41 * (yw_2_3** (1 / 3))) + 0.142 * (Ln(((1 + xw_2_3)**2) / (1 - xw_2_3 + (xw_2_3**2)))) + 0.492 * ATan((2 * xw_2_3 - 1) / (3**0.5)) + Phi_o
+phi_hw1_3 = ((1 - 0.057) / 0.78) * Ln((0.33 + (yw_1_3** 0.78)) / 0.33)
+phi_hw2_3 = ((1 - 0.057) / 0.78) * Ln((0.33 + (yw_2_3** 0.78)) / 0.33)
+
+#FINAL EQUATIONS
+print("final calculations")
+Hwet_final =  Con ( Hwet_3 < 0, 0, Hwet_3 )
+Hwet_final.save("C:/HYD118_Lab5/Lab5SEBS/output/Hwet_final.tif")
+#Hi_final =  Con ( Sen_Heat_3 > Hwet_final , Sen_Heat_3, Hwet_final)
+Hi_final =  Con ( Sen_Heat_3 < Hwet_final , Hwet_final, Sen_Heat_3)
+#H_final = Con ( Hi_final < H_dry, Hi_final, H_dry )
+H_final = Con ( Hi_final > H_dry, H_dry, Hi_final )
+LE_wet = Net_Rad - G - Hwet_final
+EFr = 1 - (( H_final - Hwet_final ) / ( H_dry - Hwet_final ))
+EFr.save("C:/HYD118_Lab5/Lab5SEBS/output/EFr.tif")
+EF = ( EFr * LE_wet ) / ( Net_Rad - G )
+EF.save("C:/HYD118_Lab5/Lab5SEBS/output/EF.tif")
+ET_daily = ( EF * Rn_day ) / 28.672
+ET_daily.save("C:/HYD118_Lab5/Lab5SEBS/output/ETDaily.tif")
+ET_hourly = ((Net_Rad - H_final - G ) * 3600) / Latent_HV
+Net_Rad.save("C:/HYD118_Lab5/Lab5SEBS/output/Net_Rad.tif")
+H_final.save("C:/HYD118_Lab5/Lab5SEBS/output/H.tif")
+G.save("C:/HYD118_Lab5/Lab5SEBS/output/G.tif")
+Latent_HV.save("C:/HYD118_Lab5/Lab5SEBS/output/Latent_HV.tif")
+ET_hourly.save("C:/HYD118_Lab5/Lab5SEBS/output/ETHourly.tif")
+print("finished")
